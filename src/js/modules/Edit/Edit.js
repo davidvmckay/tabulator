@@ -38,6 +38,7 @@ export default class Edit extends Module{
 		
 		this.registerTableFunction("getEditedCells", this.getEditedCells.bind(this));
 		this.registerTableFunction("clearCellEdited", this.clearCellEdited.bind(this));
+		this.registerTableFunction("setCellEdited", this.setCellEdited.bind(this));
 		this.registerTableFunction("navigatePrev", this.navigatePrev.bind(this));
 		this.registerTableFunction("navigateNext", this.navigateNext.bind(this));
 		this.registerTableFunction("navigateLeft", this.navigateLeft.bind(this));
@@ -47,6 +48,7 @@ export default class Edit extends Module{
 		
 		this.registerComponentFunction("cell", "isEdited", this.cellIsEdited.bind(this));
 		this.registerComponentFunction("cell", "clearEdited", this.clearEdited.bind(this));
+		this.registerComponentFunction("cell", "setEdited", this.setEdited.bind(this));
 		this.registerComponentFunction("cell", "edit", this.editCell.bind(this));
 		this.registerComponentFunction("cell", "cancelEdit", this.cellCancelEdit.bind(this));
 		
@@ -176,6 +178,22 @@ export default class Edit extends Module{
 		
 		cells.forEach((cell) => {
 			this.table.modules.edit.clearEdited(cell._getSelf());
+		});
+	}
+	
+	//mark cells as edited programmatically, mirrors clearCellEdited
+	//https://github.com/tabulator-tables/tabulator/issues/4443
+	setCellEdited(cells){
+		if(!cells){
+			return;
+		}
+		
+		if(!Array.isArray(cells)){
+			cells = [cells];
+		}
+		
+		cells.forEach((cell) => {
+			this.table.modules.edit.setEdited(cell._getSelf());
 		});
 	}
 	
@@ -489,6 +507,12 @@ export default class Edit extends Module{
 			
 			cell.table.element.classList.remove("tabulator-editing");
 		}
+
+		//release the redraw block taken when the editor opened, running any redraw
+		//(e.g. a resize) that was deferred while editing.
+		if(this.table.getRedrawBlock()){
+			this.table.restoreRedraw();
+		}
 	}
 	
 	cancelEdit(){
@@ -645,12 +669,13 @@ export default class Edit extends Module{
 		cellEditor, component, params;
 
 		//prevent editing if another cell is refusing to leave focus (eg. validation fail)
-		
+		//and prevent an open editor being restarted on top of itself
 		if(this.currentCell){
-			if(!this.invalidEdit && this.currentCell !== cell){
-				this.cancelEdit();
+			if(this.invalidEdit || this.currentCell === cell){
+				return;
 			}
-			return;
+			
+			this.cancelEdit();
 		}
 		
 		//handle successful value change
@@ -711,13 +736,16 @@ export default class Edit extends Module{
 		}
 		
 		if(!cell.column.modules.edit.blocked){
-			if(e){
-				e.stopPropagation();
-			}
-			
 			allowEdit = this.allowEdit(cell);
-			
+
 			if(allowEdit || forceEdit){
+				//only stop event propagation once we know the cell will be edited,
+				//otherwise non-editable cells would swallow clicks meant for other
+				//handlers such as the cellClick callback (#4421)
+				if(e){
+					e.stopPropagation();
+				}
+
 				self.cancelEdit();
 				
 				self.currentCell = cell;
@@ -753,15 +781,29 @@ export default class Edit extends Module{
 						cell.table.element.classList.add("tabulator-editing");
 						while(element.firstChild) element.removeChild(element.firstChild);
 						element.appendChild(cellEditor);
-						
+
+						//block table redraws while the editor is open so a redraw (e.g. a
+						//resize, or a % height editor growing the table, #4142) cannot
+						//re-render the rows and tear the editor down. Released in clearEditor.
+						this.table.blockRedraw();
+
 						//trigger onRendered Callback
 						rendered();
 						
-						//prevent editing from triggering rowClick event
+						//prevent editing from triggering rowClick event and, with
+						//selectableRange, from starting a range selection whose focus
+						//transfer would blur and close the editor
+						//https://github.com/tabulator-tables/tabulator/issues/4563
 						var children = element.children;
-						
+
 						for (var i = 0; i < children.length; i++) {
 							children[i].addEventListener("click", function(e){
+								e.stopPropagation();
+							});
+							children[i].addEventListener("mousedown", function(e){
+								e.stopPropagation();
+							});
+							children[i].addEventListener("mouseup", function(e){
 								e.stopPropagation();
 							});
 						}
@@ -837,6 +879,24 @@ export default class Edit extends Module{
 		
 		if(editIndex > -1){
 			this.editedCells.splice(editIndex, 1);
+		}
+	}
+	
+	//mark a cell as edited without a user edit, mirrors clearEdited
+	//https://github.com/tabulator-tables/tabulator/issues/4443
+	setEdited(cell){
+		if(!cell.modules.edit){
+			cell.modules.edit = {};
+		}
+		
+		if(!cell.modules.edit.edited){
+			cell.modules.edit.edited = true;
+			
+			this.dispatch("edit-edited-set", cell);
+		}
+		
+		if(this.editedCells.indexOf(cell) == -1){
+			this.editedCells.push(cell);
 		}
 	}
 }

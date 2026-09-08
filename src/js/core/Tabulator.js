@@ -75,6 +75,12 @@ class Tabulator extends ModuleBinder{
 		
 		if(this.initializeElement(element)){
 			
+			if (this.element.id) {
+				this.instanceId = this.element.id;
+			} else {
+				this.instanceId = Math.random().toString(36).slice(2, 7);
+			}
+			
 			this.initializeCoreSystems(options);
 			
 			//delay table creation to allow event bindings immediately after the constructor
@@ -232,7 +238,7 @@ class Tabulator extends ModuleBinder{
 		
 		element.classList.add("tabulator");
 		element.setAttribute("role", "grid");
-		element.setAttribute("aria-owns", "tabulator-table-body");
+		element.setAttribute("aria-owns", "tabulator-table-body-" + this.instanceId);
 		
 		//empty element
 		while(element.firstChild) element.removeChild(element.firstChild);
@@ -417,6 +423,10 @@ class Tabulator extends ModuleBinder{
 	//get table data array count
 	getDataCount(active){
 		return this.rowManager.getDataCount(active);
+	}
+
+	getRedrawBlock() {
+		return this.rowManager.redrawBlock || this.columnManager.redrawBlock;
 	}
 	
 	//replace data, keeping table in position with same sort
